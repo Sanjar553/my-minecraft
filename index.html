@@ -7,116 +7,467 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #81d4fa; font-family: 'Segoe UI', sans-serif; }
-        #ui { position: absolute; top: 15px; left: 15px; color: white; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 8px; pointer-events: none; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; transform: translate(-50%, -50%); pointer-events: none; }
+        #ui { position: absolute; top: 15px; left: 15px; color: white; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 8px; pointer-events: none; z-index: 10; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(5px); }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; transform: translate(-50%, -50%); pointer-events: none; z-index: 5; }
         #crosshair::before, #crosshair::after { content: ''; position: absolute; background: white; mix-blend-mode: difference; }
         #crosshair::before { left: 11px; width: 2px; height: 24px; }
         #crosshair::after { top: 11px; width: 24px; height: 2px; }
+        
+        #hotbar-container { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        #block-name { color: white; background: rgba(0,0,0,0.5); padding: 2px 12px; border-radius: 10px; font-size: 14px; text-shadow: 1px 1px 2px black; }
+        #hotbar { display: flex; gap: 4px; background: rgba(0,0,0,0.85); padding: 6px; border-radius: 6px; border: 2px solid #333; }
+        
+        .slot { width: 46px; height: 46px; border: 3px solid #555; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; background: #222; transition: all 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275); position: relative; color: white; }
+        .slot.active { border-color: #ffffff; background: #555; transform: scale(1.15) translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+        
+        #loading { position: fixed; inset: 0; background: #000; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; font-size: 24px; }
+        .progress-bar { width: 200px; height: 4px; background: #333; margin-top: 20px; border-radius: 2px; overflow: hidden; }
+        .progress-fill { width: 0%; height: 100%; background: #4caf50; transition: width 0.3s; }
+        .stats { color: #00e676; font-weight: bold; }
+        #time-display { color: #ffeb3b; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <b>Sanjar's Minecraft</b><br>
-        W,A,S,D - Yurish | Space - Sakrash<br>
-        Chap tugma - Sindirish<br>
-        O'ng tugma - Blok qo'yish
+    <div id="loading">
+        <div style="letter-spacing: 4px; font-weight: bold; margin-bottom: 10px;">MEGA WORLD</div>
+        <div id="load-status" style="font-size: 16px; color: #aaa;">Resurslar yuklanmoqda...</div>
+        <div class="progress-bar"><div id="progress" class="progress-fill"></div></div>
     </div>
+
+    <div id="ui">
+        <b style="font-size: 18px;">MC <span class="stats">ULTRA 2024</span></b><br>
+        <small>📍 <span id="pos">0, 0, 0</span></small><br>
+        <small>📦 <span id="count">0</span> bloklar</small><br>
+        <small>⚡ <span id="fps">0</span> FPS</small><br>
+        <small>⏰ Vaqt: <span id="time-display">00:00</span></small>
+    </div>
+
     <div id="crosshair"></div>
 
+    <div id="hotbar-container">
+        <div id="block-name">Maysa</div>
+        <div id="hotbar">
+            <div class="slot active" data-type="grass" data-name="Maysa">🌿</div>
+            <div class="slot" data-type="dirt" data-name="Tuproq">🟫</div>
+            <div class="slot" data-type="cobblestone" data-name="Tosh">🌑</div>
+            <div class="slot" data-type="brick" data-name="G'isht">🧱</div>
+            <div class="slot" data-type="sand" data-name="Qum">🏜️</div>
+            <div class="slot" data-type="wood" data-name="Yog'och">🪵</div>
+            <div class="slot" data-type="planks" data-name="Taxta">🏠</div>
+            <div class="slot" data-type="glass" data-name="Oyna">💎</div>
+            <div class="slot" data-type="gold" data-name="Oltin">🪙</div>
+            <div class="slot" data-type="diamond" data-name="Olmos">💠</div>
+            <div class="slot" data-type="wool_red" data-name="Qizil Jun">🧶</div>
+            <div class="slot" data-type="lamp" data-name="Chiroq">💡</div>
+        </div>
+    </div>
+
     <script>
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x81d4fa);
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // Chiroq
-        const light = new THREE.HemisphereLight(0xeeeeee, 0x888888, 1);
-        scene.add(light);
-
-        // Yer va Bloklar uchun tekstura o'rniga ranglar
-        const blocks = [];
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        let scene, camera, renderer, raycaster, clock;
+        let moveF = false, moveB = false, moveL = false, moveR = false;
+        let velocity = new THREE.Vector3(), isLocked = false, canJump = true;
+        let blocks = []; 
+        let instancedMeshes = {}; 
+        let selectedType = 'grass';
+        let selectionBox;
+        let lockCooldown = false; 
         
-        function createBlock(x, y, z, color = 0x4caf50) {
-            const material = new THREE.MeshLambertMaterial({ color: color });
-            const block = new THREE.Mesh(geometry, material);
-            block.position.set(x, y, z);
-            scene.add(block);
-            blocks.push(block);
+        let frameCount = 0;
+        let lastFpsUpdate = 0;
+
+        // Vaqt tizimi o'zgaruvchilari
+        let gameTime = 0; // sekundlarda
+        const DAY_DURATION = 300; // bir kun 5 daqiqa (300 sekund)
+
+        // O'yin sozlamalari
+        const WORLD_SIZE = 120; 
+        const PLAYER_HEIGHT = 1.8;
+        const PLAYER_RADIUS = 0.35;
+
+        // Blok ranglari va xususiyatlari
+        const TEXTURES = {
+            grass: '#5d9944',
+            dirt: '#795548',
+            cobblestone: '#616161',
+            stone: '#888888',
+            wood: '#6d4c41',
+            leaves: '#388e3c',
+            planks: '#d7a150',
+            water: '#2196f3',
+            farm: '#4e342e',
+            crop: '#aed581',
+            lamp: '#fff176',
+            glass: '#e1f5fe',
+            brick: '#b71c1c',
+            sand: '#f0e68c',
+            gold: '#ffd700',
+            diamond: '#00e5ff',
+            wool_red: '#d32f2f'
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x81d4fa);
+            scene.fog = new THREE.Fog(0x81d4fa, 60, 180);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.rotation.order = 'YXZ';
+            camera.position.set(0, 25, 30);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+            document.body.appendChild(renderer.domElement);
+
+            // Tanlangan blok ramkasi
+            const boxGeo = new THREE.BoxGeometry(1.03, 1.03, 1.03);
+            const boxMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.8 });
+            selectionBox = new THREE.Mesh(boxGeo, boxMat);
+            scene.add(selectionBox);
+
+            raycaster = new THREE.Raycaster();
+            clock = new THREE.Clock();
+
+            setupControls();
+            
+            // Yuklash jarayoni vizualizatsiyasi
+            const progress = document.getElementById('progress');
+            const status = document.getElementById('load-status');
+            
+            status.innerText = "Landshaft generatsiya qilinmoqda...";
+            progress.style.width = "30%";
+            
+            setTimeout(() => {
+                generateMegaVillage();
+                progress.style.width = "100%";
+                status.innerText = "Tayyor!";
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                }, 500);
+            }, 100);
+
+            animate();
         }
 
-        // Yer maydonini yaratish
-        for(let x = -10; x < 10; x++) {
-            for(let z = -10; z < 10; z++) {
-                createBlock(x, 0, z, 0x795548);
-            }
+        function buildBlock(x, y, z, type) {
+            blocks.push({pos: new THREE.Vector3(Math.round(x), Math.round(y), Math.round(z)), type: type});
         }
 
-        camera.position.set(0, 5, 10);
-        const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2(0, 0);
-
-        // Tugmalarni boshqarish (Minecraft standartida)
-        window.addEventListener('mousedown', (event) => {
-            if (!document.pointerLockElement) {
-                document.body.requestPointerLock();
-                return;
-            }
-
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(blocks);
-
-            if (intersects.length > 0) {
-                const intersect = intersects[0];
-
-                // CHAP TUGMA (0) -> BLOKNI SINDIRISH
-                if (event.button === 0) {
-                    if (intersect.object.position.y !== 0 || blocks.length > 400) {
-                        scene.remove(intersect.object);
-                        blocks.splice(blocks.indexOf(intersect.object), 1);
+        function createTree(x, y, z) {
+            const h = 5 + Math.floor(Math.random() * 3);
+            for(let i = 0; i < h; i++) buildBlock(x, y + i, z, 'wood');
+            for(let lx = -2; lx <= 2; lx++) {
+                for(let lz = -2; lz <= 2; lz++) {
+                    for(let ly = 0; ly <= 3; ly++) {
+                        const dist = Math.abs(lx) + Math.abs(lz) + Math.abs(ly-1);
+                        if(dist < 4) {
+                            buildBlock(x + lx, y + h - 2 + ly, z + lz, 'leaves');
+                        }
                     }
                 }
-                // O'NG TUGMA (2) -> BLOK QO'YISH
-                else if (event.button === 2) {
-                    const pos = intersect.object.position.clone().add(intersect.face.normal);
-                    createBlock(pos.x, pos.y, pos.z, 0x8bc34a);
+            }
+        }
+
+        function createHouse(x, y, z, w=5, d=5, h=4, material='planks', roofMaterial='cobblestone') {
+            // Pol
+            for(let dx = 0; dx < w; dx++) {
+                for(let dz = 0; dz < d; dz++) {
+                    buildBlock(x+dx, y-1, z+dz, 'stone');
                 }
             }
-        });
+            // Devorlar
+            for(let dy = 0; dy < h; dy++) {
+                for(let dx = 0; dx < w; dx++) {
+                    for(let dz = 0; dz < d; dz++) {
+                        const isWall = (dx === 0 || dx === w-1 || dz === 0 || dz === d-1);
+                        if(!isWall) continue;
+                        
+                        const isDoor = (dx === Math.floor(w/2) && dz === 0 && dy < 2);
+                        const isWindow = (dy === 1 || dy === 2) && ((dx === 0 || dx === w-1 || dz === d-1) && (dx%2===0 && dz%2===0));
+                        
+                        if(isDoor) continue;
+                        if(isWindow) { buildBlock(x+dx, y+dy, z+dz, 'glass'); continue; }
+                        
+                        const isCorner = (dx === 0 || dx === w-1) && (dz === 0 || dz === d-1);
+                        buildBlock(x + dx, y + dy, z + dz, isCorner ? 'wood' : material);
+                    }
+                }
+            }
+            // Tom
+            for(let th = 0; th <= Math.floor(w/2) + 1; th++) {
+                for(let dx = -1 + th; dx <= w - th; dx++) {
+                    for(let dz = -1; dz <= d; dz++) {
+                        buildBlock(x+dx, y+h+th, z+dz, roofMaterial);
+                    }
+                }
+            }
+        }
 
-        // O'ng tugma menyusini taqiqlash
-        window.addEventListener('contextmenu', e => e.preventDefault());
+        function generateMegaVillage() {
+            // 1. Relyef
+            for(let x = -WORLD_SIZE/2; x < WORLD_SIZE/2; x++) {
+                for(let z = -WORLD_SIZE/2; z < WORLD_SIZE/2; z++) {
+                    const d = Math.sqrt(x*x + z*z);
+                    let h = Math.floor(Math.sin(x/10) * Math.cos(z/10) * 4);
+                    
+                    if(d > 40) h += Math.floor((d - 40) / 3);
 
-        // Kamera harakati (Oddiy boshqaruv)
-        let keys = {};
-        window.addEventListener('keydown', e => keys[e.code] = true);
-        window.addEventListener('keyup', e => keys[e.code] = false);
+                    const isPath = (Math.abs(x) < 3 || Math.abs(z) < 3 || (Math.abs(x-20) < 2 && z > -20 && z < 20));
+                    
+                    if(isPath) {
+                        buildBlock(x, h, z, 'cobblestone');
+                    } else if(h > 8) {
+                        buildBlock(x, h, z, 'stone');
+                    } else if(x > 35 && x < 45 && z > 35 && z < 45) {
+                        buildBlock(x, h, z, 'sand');
+                    } else {
+                        buildBlock(x, h, z, 'grass');
+                    }
+                    buildBlock(x, h-1, z, 'dirt');
+                    if(h < -2) buildBlock(x, h+1, z, 'water');
+                }
+            }
+
+            // 2. Turli xil binolar
+            createHouse(-15, 2, -15, 7, 7, 5, 'brick', 'wood'); 
+            createHouse(15, 2, 10, 5, 5, 4, 'planks', 'cobblestone'); 
+            createHouse(-30, 4, 20, 6, 8, 6, 'stone', 'brick'); 
+            
+            // Maxsus inshoot: Oltin minora
+            for(let i=0; i<12; i++) {
+                buildBlock(0, i+2, 0, i === 11 ? 'diamond' : 'gold');
+                if(i%3 === 0) {
+                    buildBlock(1, i+2, 0, 'lamp');
+                    buildBlock(-1, i+2, 0, 'lamp');
+                }
+            }
+
+            // 3. Tabiat
+            for(let i=0; i<40; i++) {
+                const rx = (Math.random()-0.5) * WORLD_SIZE;
+                const rz = (Math.random()-0.5) * WORLD_SIZE;
+                if(Math.abs(rx) > 10 && Math.abs(rz) > 10) {
+                    const h = Math.floor(Math.sin(rx/10) * Math.cos(rz/10) * 4) + (Math.sqrt(rx*rx+rz*rz) > 40 ? Math.floor((Math.sqrt(rx*rx+rz*rz)-40)/3) : 0);
+                    createTree(Math.round(rx), h+1, Math.round(rz));
+                }
+            }
+
+            updateAllMeshes();
+        }
+
+        function updateAllMeshes() {
+            for(let type in instancedMeshes) scene.remove(instancedMeshes[type]);
+            instancedMeshes = {};
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const typesData = {};
+            blocks.forEach(b => {
+                if(!typesData[b.type]) typesData[b.type] = [];
+                typesData[b.type].push(b);
+            });
+            for(let type in typesData) {
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: TEXTURES[type],
+                    transparent: ['water', 'glass'].includes(type),
+                    opacity: type === 'water' ? 0.6 : (type === 'glass' ? 0.4 : 1.0)
+                });
+                const count = typesData[type].length;
+                const iMesh = new THREE.InstancedMesh(geometry, material, count + 2000); 
+                const matrix = new THREE.Matrix4();
+                typesData[type].forEach((b, idx) => {
+                    matrix.setPosition(b.pos.x, b.pos.y, b.pos.z);
+                    iMesh.setMatrixAt(idx, matrix);
+                });
+                iMesh.instanceMatrix.needsUpdate = true;
+                iMesh.count = count;
+                scene.add(iMesh);
+                instancedMeshes[type] = iMesh;
+            }
+            document.getElementById('count').innerText = blocks.length;
+        }
+
+        function updateTime(dt) {
+            gameTime += dt;
+            const cycle = (gameTime % DAY_DURATION) / DAY_DURATION; // 0 dan 1 gacha
+            
+            // Osmon rangini o'zgartirish
+            let skyColor;
+            if (cycle < 0.2 || cycle > 0.8) { // Tun
+                skyColor = new THREE.Color(0x0a192f);
+            } else if (cycle < 0.3) { // Tong
+                skyColor = new THREE.Color(0xff8c00).lerp(new THREE.Color(0x81d4fa), (cycle - 0.2) * 10);
+            } else if (cycle < 0.7) { // Kun
+                skyColor = new THREE.Color(0x81d4fa);
+            } else { // Shom
+                skyColor = new THREE.Color(0x81d4fa).lerp(new THREE.Color(0xff4500), (cycle - 0.7) * 10);
+            }
+            
+            scene.background = skyColor;
+            scene.fog.color = skyColor;
+            
+            // UI vaqtini yangilash
+            const minutes = Math.floor(gameTime / 60);
+            const seconds = Math.floor(gameTime % 60);
+            document.getElementById('time-display').innerText = 
+                `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function checkCollision(pos) {
+            const px = Math.round(pos.x);
+            const pz = Math.round(pos.z);
+            for (let i = 0; i < blocks.length; i++) {
+                const b = blocks[i];
+                if(b.type === 'water') continue; 
+                if(Math.abs(px - b.pos.x) > 1 || Math.abs(pz - b.pos.z) > 1) continue;
+                if (Math.abs(pos.x - b.pos.x) < 0.5 + PLAYER_RADIUS &&
+                    Math.abs(pos.z - b.pos.z) < 0.5 + PLAYER_RADIUS &&
+                    pos.y < b.pos.y + 0.5 && pos.y + PLAYER_HEIGHT > b.pos.y - 0.5) return true;
+            }
+            return false;
+        }
+
+        function setupControls() {
+            document.body.addEventListener('mousedown', (e) => { 
+                if(!isLocked && !lockCooldown) {
+                    try { document.body.requestPointerLock(); } catch (err) {}
+                    return;
+                }
+                if(!isLocked) return;
+
+                raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+                let bestHit = null;
+                for(let type in instancedMeshes) {
+                    const hit = raycaster.intersectObject(instancedMeshes[type]);
+                    if(hit.length > 0 && (!bestHit || hit[0].distance < bestHit.distance)) bestHit = hit[0];
+                }
+
+                if(bestHit && bestHit.distance < 8) {
+                    const matrix = new THREE.Matrix4();
+                    bestHit.object.getMatrixAt(bestHit.instanceId, matrix);
+                    const pos = new THREE.Vector3().setFromMatrixPosition(matrix);
+
+                    if(e.button === 2) { 
+                        blocks = blocks.filter(b => !(b.pos.x === pos.x && b.pos.y === pos.y && b.pos.z === pos.z));
+                        updateAllMeshes();
+                    } else if(e.button === 0) { 
+                        const normal = bestHit.face.normal.clone();
+                        const newPos = pos.clone().add(normal);
+                        const playerPos = camera.position.clone();
+                        if(newPos.distanceTo(new THREE.Vector3(playerPos.x, newPos.y, playerPos.z)) > 0.8) {
+                            buildBlock(newPos.x, newPos.y, newPos.z, selectedType);
+                            updateAllMeshes();
+                        }
+                    }
+                }
+            });
+
+            document.addEventListener('pointerlockchange', () => {
+                isLocked = document.pointerLockElement === document.body;
+                if(!isLocked) { lockCooldown = true; setTimeout(() => { lockCooldown = false; }, 1300); }
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if(isLocked) {
+                    camera.rotation.y -= e.movementX * 0.002;
+                    camera.rotation.x -= e.movementY * 0.002;
+                    camera.rotation.x = Math.max(-1.5, Math.min(1.5, camera.rotation.x));
+                }
+            });
+            
+            const handleKey = (v) => (e) => {
+                const code = e.code;
+                if(code === 'KeyW') moveF = v; if(code === 'KeyS') moveB = v;
+                if(code === 'KeyA') moveL = v; if(code === 'KeyD') moveR = v;
+                if(code === 'Space' && v && canJump) { velocity.y = 9; canJump = false; }
+                
+                if(v && e.key >= '1' && e.key <= '9') {
+                    const slots = document.querySelectorAll('.slot');
+                    const idx = parseInt(e.key) - 1;
+                    if(slots[idx]) slots[idx].click();
+                }
+            };
+            document.addEventListener('keydown', handleKey(true));
+            document.addEventListener('keyup', handleKey(false));
+
+            document.querySelectorAll('.slot').forEach(s => {
+                s.onclick = () => {
+                    document.querySelectorAll('.slot').forEach(x => x.classList.remove('active'));
+                    s.classList.add('active');
+                    selectedType = s.dataset.type;
+                    document.getElementById('block-name').innerText = s.dataset.name;
+                };
+            });
+            window.oncontextmenu = (e) => e.preventDefault();
+        }
 
         function animate() {
             requestAnimationFrame(animate);
-            if (keys['KeyW']) camera.translateZ(-0.1);
-            if (keys['KeyS']) camera.translateZ(0.1);
-            if (keys['KeyA']) camera.translateX(-0.1);
-            if (keys['KeyD']) camera.translateX(0.1);
+            const dt = Math.min(clock.getDelta(), 0.1);
+            
+            updateTime(dt);
+
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFpsUpdate > 1000) {
+                document.getElementById('fps').innerText = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+                frameCount = 0; lastFpsUpdate = now;
+            }
+
+            if(isLocked) {
+                velocity.y -= 24 * dt;
+                const dir = new THREE.Vector3();
+                camera.getWorldDirection(dir); dir.y = 0; dir.normalize();
+                const side = new THREE.Vector3().crossVectors(camera.up, dir).normalize();
+
+                const speed = (moveF || moveB || moveL || moveR) ? 12 * dt : 0;
+                let dm = new THREE.Vector3(0, 0, 0);
+                if(moveF) dm.addScaledVector(dir, speed);
+                if(moveB) dm.addScaledVector(dir, -speed);
+                if(moveL) dm.addScaledVector(side, speed);
+                if(moveR) dm.addScaledVector(side, -speed);
+
+                if (!checkCollision(new THREE.Vector3(camera.position.x + dm.x, camera.position.y - PLAYER_HEIGHT + 0.4, camera.position.z))) {
+                    camera.position.x += dm.x;
+                }
+                if (!checkCollision(new THREE.Vector3(camera.position.x, camera.position.y - PLAYER_HEIGHT + 0.4, camera.position.z + dm.z))) {
+                    camera.position.z += dm.z;
+                }
+
+                camera.position.y += velocity.y * dt;
+                const footPos = camera.position.clone(); footPos.y -= PLAYER_HEIGHT;
+                if (checkCollision(footPos)) {
+                    if (velocity.y < 0) {
+                        camera.position.y = Math.floor(footPos.y) + PLAYER_HEIGHT + 0.5;
+                        canJump = true;
+                    }
+                    velocity.y = 0;
+                } else { canJump = false; }
+
+                if(camera.position.y < -40) camera.position.set(0, 30, 0);
+                document.getElementById('pos').innerText = Math.floor(camera.position.x) + ", " + Math.floor(camera.position.y) + ", " + Math.floor(camera.position.z);
+
+                raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+                let bestHit = null;
+                for(let type in instancedMeshes) {
+                    const hit = raycaster.intersectObject(instancedMeshes[type]);
+                    if(hit.length > 0 && (!bestHit || hit[0].distance < bestHit.distance)) bestHit = hit[0];
+                }
+                if(bestHit && bestHit.distance < 8) {
+                    const matrix = new THREE.Matrix4();
+                    bestHit.object.getMatrixAt(bestHit.instanceId, matrix);
+                    selectionBox.position.setFromMatrixPosition(matrix);
+                    selectionBox.visible = true;
+                } else { selectionBox.visible = false; }
+            }
             renderer.render(scene, camera);
         }
 
-        // Sichqoncha bilan burilish
-        window.addEventListener('mousemove', (e) => {
-            if (document.pointerLockElement) {
-                camera.rotation.y -= e.movementX * 0.002;
-                camera.rotation.x -= e.movementY * 0.002;
-            }
-        });
-
-        animate();
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
+
+        init();
     </script>
 </body>
 </html>
